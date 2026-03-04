@@ -34,6 +34,7 @@ import { PackageRegistry } from "@/bun/registry"
 import { proxied } from "@/util/proxied"
 import { iife } from "@/util/iife"
 import { Account } from "@/account"
+import { isRecord } from "@/util/record"
 import { ConfigPaths } from "./paths"
 import { Filesystem } from "@/util/filesystem"
 import { Process } from "@/util/process"
@@ -1376,10 +1377,6 @@ export namespace Config {
       if (existsSync(file)) return file
     }
     return candidates[0]
-  }
-
-  function isRecord(value: unknown): value is Record<string, unknown> {
-    return !!value && typeof value === "object" && !Array.isArray(value)
   }
 
   function patchJsonc(input: string, patch: unknown, path: string[] = []): string {
