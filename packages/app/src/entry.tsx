@@ -110,6 +110,36 @@ const getDefaultUrl = () => {
   return getCurrentUrl()
 }
 
+const MANAGER_URL = import.meta.env.VITE_MANAGER_URL || location.origin
+
+async function fetchManagedServers(): Promise<ServerConnection.Http[]> {
+  try {
+    const resp = await fetch(`${MANAGER_URL}/api/instances`)
+    if (!resp.ok) return []
+    const instances = await resp.json() as Array<{ publicIp: string | null; status: string; name: string }>
+    return instances
+      .filter((i) => i.publicIp && i.status === "healthy")
+      .map((i) => ({
+        type: "http" as const,
+        displayName: i.name,
+        http: { url: `http://${i.publicIp}:4096` },
+      }))
+  } catch {
+    return []
+  }
+}
+
+function startServerSync(addServer: (conn: ServerConnection.Http) => void) {
+  const sync = async () => {
+    const managed = await fetchManagedServers()
+    for (const s of managed) {
+      addServer(s)
+    }
+  }
+  sync()
+  setInterval(sync, 30_000)
+}
+
 const platform: Platform = {
   platform: "web",
   version: pkg.version,
@@ -126,19 +156,46 @@ const platform: Platform = {
 }
 
 if (root instanceof HTMLElement) {
-  const server: ServerConnection.Http = { type: "http", http: { url: getCurrentUrl() } }
-  render(
-    () => (
-      <PlatformProvider value={platform}>
-        <AppBaseProviders>
-          <AppInterface
-            defaultServer={ServerConnection.Key.make(getDefaultUrl())}
-            servers={[server]}
-            disableHealthCheck
-          />
-        </AppBaseProviders>
-      </PlatformProvider>
-    ),
-    root,
-  )
+  ;(async () => {
+    const managedServers = await fetchManagedServers()
+    const localServer: ServerConnection.Http = { type: "http", http: { url: getCurrentUrl() } }
+    const allServers: ServerConnection.Http[] = [...managedServers]
+    // Only include local server if it's not already in managed list
+    if (!managedServers.some((s) => s.http.url === localServer.http.url)) {
+      allServers.push(localServer)
+    }
+    const defaultUrl = managedServers.length > 0 ? managedServers[0].http.url : getCurrentUrl()
+
+    render(
+      () => (
+        <PlatformProvider value={platform}>
+          <AppBaseProviders>
+            <AppInterface
+              defaultServer={ServerConnection.Key.make(readDefaultServerUrl() || defaultUrl)}
+              servers={allServers}
+              disableHealthCheck
+            />
+          </AppBaseProviders>
+        </PlatformProvider>
+      ),
+      root,
+    )
+
+    // Periodically sync managed servers into localStorage so the app picks them up
+    setInterval(async () => {
+      const servers = await fetchManagedServers()
+      for (const s of servers) {
+        const key = `opencode.global.dat:server.v3`
+        try {
+          const stored = JSON.parse(localStorage.getItem(key) || "{}")
+          const list: Array<{ type: string; http: { url: string }; displayName?: string }> = stored.list || []
+          if (!list.some((existing) => existing.http?.url === s.http.url)) {
+            list.push({ type: "http", http: { url: s.http.url }, displayName: s.displayName })
+            stored.list = list
+            localStorage.setItem(key, JSON.stringify(stored))
+          }
+        } catch {}
+      }
+    }, 30_000)
+  })()
 }

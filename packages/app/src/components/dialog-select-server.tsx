@@ -106,6 +106,42 @@ function useServerPreview() {
 }
 
 function ServerForm(props: ServerFormProps) {
+  const keyDown = (event: KeyboardEvent) => {
+    event.stopPropagation()
+    if (event.key === "Escape") {
+      event.preventDefault()
+      props.onBack()
+      return
+    }
+    if (event.key !== "Enter" || event.isComposing) return
+    event.preventDefault()
+    props.onSubmit()
+  }
+
+  return (
+    <div class="px-5">
+      <div class="bg-surface-base rounded-md p-5 flex flex-col gap-3">
+        <TextField
+          type="text"
+          label="Server name"
+          placeholder="e.g. dev-1, staging, my-project"
+          value={props.name}
+          autofocus
+          validationState={props.error ? "invalid" : "valid"}
+          error={props.error}
+          disabled={props.busy}
+          onChange={props.onNameChange}
+          onKeyDown={keyDown}
+        />
+        <Show when={props.busy}>
+          <p class="text-text-dimmed-extra text-12-regular">Launching instance... this takes 2-3 minutes.</p>
+        </Show>
+      </div>
+    </div>
+  )
+}
+
+function EditServerForm(props: ServerFormProps) {
   const language = useLanguage()
   const keyDown = (event: KeyboardEvent) => {
     event.stopPropagation()
@@ -353,32 +389,53 @@ export function DialogSelectServer() {
     )
   }
 
-  async function handleAdd(value: string) {
+  async function handleAdd(_value: string) {
     if (store.addServer.adding) return
-    const normalized = normalizeServerUrl(value)
-    if (!normalized) {
-      resetAdd()
+    const name = store.addServer.name.trim()
+    if (!name) {
+      setStore("addServer", { error: "Server name is required" })
       return
     }
 
     setStore("addServer", { adding: true, error: "" })
 
-    const conn: ServerConnection.Http = {
-      type: "http",
-      http: { url: normalized },
-    }
-    if (store.addServer.name.trim()) conn.displayName = store.addServer.name.trim()
-    if (store.addServer.password) conn.http.password = store.addServer.password
-    if (store.addServer.password && store.addServer.username) conn.http.username = store.addServer.username
-    const result = await checkServerHealth(conn.http)
-    setStore("addServer", { adding: false })
-    if (!result.healthy) {
-      setStore("addServer", { error: language.t("dialog.server.add.error") })
-      return
-    }
+    try {
+      const managerUrl = (import.meta as any).env?.VITE_MANAGER_URL || location.origin
+      const resp = await fetch(`${managerUrl}/api/instances`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      })
+      if (!resp.ok) throw new Error(await resp.text())
+      const instance = await resp.json() as { instanceId: string; publicIp: string | null }
 
-    resetAdd()
-    await select(conn, true)
+      // Poll until instance is healthy (up to 4 minutes)
+      const deadline = Date.now() + 240_000
+      let publicIp: string | null = null
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 10_000))
+        const status = await fetch(`${managerUrl}/api/instances/${instance.instanceId}`).then((r) => r.json()) as { publicIp: string | null; status: string }
+        publicIp = status.publicIp
+        if (status.status === "healthy" && publicIp) break
+      }
+
+      if (!publicIp) {
+        setStore("addServer", { adding: false, error: "Instance launched but not healthy yet. Check /manage." })
+        return
+      }
+
+      const conn: ServerConnection.Http = {
+        type: "http",
+        displayName: name,
+        http: { url: `http://${publicIp}:4096` },
+      }
+
+      setStore("addServer", { adding: false })
+      resetAdd()
+      await select(conn, true)
+    } catch (err) {
+      setStore("addServer", { adding: false, error: `Failed to launch: ${err}` })
+    }
   }
 
   async function handleEdit(original: ServerConnection.Any, value: string) {
@@ -505,28 +562,70 @@ export function DialogSelectServer() {
     }
   }
 
+  async function handleTerminate(conn: ServerConnection.Http) {
+    const managerUrl = (import.meta as any).env?.VITE_MANAGER_URL || location.origin
+    const key = ServerConnection.key(conn)
+    try {
+      // Find the instance by its public IP
+      const ip = conn.http.url.replace(/^https?:\/\//, "").split(":")[0]
+      const resp = await fetch(`${managerUrl}/api/instances`)
+      if (!resp.ok) throw new Error("Failed to fetch instances")
+      const instances = await resp.json() as Array<{ instanceId: string; publicIp: string | null }>
+      const match = instances.find((i) => i.publicIp === ip)
+      if (match) {
+        await fetch(`${managerUrl}/api/instances/${match.instanceId}`, { method: "DELETE" })
+      }
+      handleRemove(key)
+      refreshHealth()
+    } catch (err) {
+      showRequestError(language, err)
+    }
+  }
+
   return (
     <Dialog title={formTitle()}>
       <div class="flex flex-col gap-2">
         <Show
           when={!isFormMode()}
           fallback={
-            <ServerForm
-              value={isAddMode() ? store.addServer.url : store.editServer.value}
-              name={isAddMode() ? store.addServer.name : store.editServer.name}
-              username={isAddMode() ? store.addServer.username : store.editServer.username}
-              password={isAddMode() ? store.addServer.password : store.editServer.password}
-              placeholder={language.t("dialog.server.add.placeholder")}
-              busy={formBusy()}
-              error={isAddMode() ? store.addServer.error : store.editServer.error}
-              status={isAddMode() ? store.addServer.status : store.editServer.status}
-              onChange={isAddMode() ? handleAddChange : handleEditChange}
-              onNameChange={isAddMode() ? handleAddNameChange : handleEditNameChange}
-              onUsernameChange={isAddMode() ? handleAddUsernameChange : handleEditUsernameChange}
-              onPasswordChange={isAddMode() ? handleAddPasswordChange : handleEditPasswordChange}
-              onSubmit={submitForm}
-              onBack={resetForm}
-            />
+            <Show
+              when={isAddMode()}
+              fallback={
+                <EditServerForm
+                  value={store.editServer.value}
+                  name={store.editServer.name}
+                  username={store.editServer.username}
+                  password={store.editServer.password}
+                  placeholder={language.t("dialog.server.add.placeholder")}
+                  busy={store.editServer.busy}
+                  error={store.editServer.error}
+                  status={store.editServer.status}
+                  onChange={handleEditChange}
+                  onNameChange={handleEditNameChange}
+                  onUsernameChange={handleEditUsernameChange}
+                  onPasswordChange={handleEditPasswordChange}
+                  onSubmit={submitForm}
+                  onBack={resetForm}
+                />
+              }
+            >
+              <ServerForm
+                value={store.addServer.url}
+                name={store.addServer.name}
+                username={store.addServer.username}
+                password={store.addServer.password}
+                placeholder=""
+                busy={store.addServer.adding}
+                error={store.addServer.error}
+                status={store.addServer.status}
+                onChange={handleAddChange}
+                onNameChange={handleAddNameChange}
+                onUsernameChange={handleAddUsernameChange}
+                onPasswordChange={handleAddPasswordChange}
+                onSubmit={submitForm}
+                onBack={resetForm}
+              />
+            </Show>
           }
         >
           <List
@@ -606,6 +705,16 @@ export function DialogSelectServer() {
                             </Show>
                             <DropdownMenu.Separator />
                             <DropdownMenu.Item
+                              onSelect={() => {
+                                if (i.type !== "http") return
+                                if (!confirm("Terminate this cloud instance? This will destroy the server.")) return
+                                handleTerminate(i)
+                              }}
+                              class="text-text-on-critical-base hover:bg-surface-critical-weak"
+                            >
+                              <DropdownMenu.ItemLabel>Terminate instance</DropdownMenu.ItemLabel>
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item
                               onSelect={() => handleRemove(ServerConnection.key(i))}
                               class="text-text-on-critical-base hover:bg-surface-critical-weak"
                             >
@@ -639,9 +748,9 @@ export function DialogSelectServer() {
           >
             <Button variant="primary" size="large" onClick={submitForm} disabled={formBusy()} class="px-3 py-1.5">
               {formBusy()
-                ? language.t("dialog.server.add.checking")
+                ? (isAddMode() ? "Launching..." : language.t("dialog.server.add.checking"))
                 : isAddMode()
-                  ? language.t("dialog.server.add.button")
+                  ? "Launch server"
                   : language.t("common.save")}
             </Button>
           </Show>
