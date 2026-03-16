@@ -158,12 +158,7 @@ const platform: Platform = {
 if (root instanceof HTMLElement) {
   ;(async () => {
     const managedServers = await fetchManagedServers()
-    const localServer: ServerConnection.Http = { type: "http", http: { url: getCurrentUrl() } }
     const allServers: ServerConnection.Http[] = [...managedServers]
-    // Only include local server if it's not already in managed list
-    if (!managedServers.some((s) => s.http.url === localServer.http.url)) {
-      allServers.push(localServer)
-    }
     const defaultUrl = managedServers.length > 0 ? managedServers[0].http.url : getCurrentUrl()
 
     render(
