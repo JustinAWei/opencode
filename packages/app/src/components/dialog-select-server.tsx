@@ -409,30 +409,42 @@ export function DialogSelectServer() {
       if (!resp.ok) throw new Error(await resp.text())
       const instance = await resp.json() as { instanceId: string; publicIp: string | null }
 
-      // Poll until instance is healthy (up to 4 minutes)
-      const deadline = Date.now() + 240_000
-      let publicIp: string | null = null
-      while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 10_000))
-        const status = await fetch(`${managerUrl}/api/instances/${instance.instanceId}`).then((r) => r.json()) as { publicIp: string | null; status: string }
-        publicIp = status.publicIp
-        if (status.status === "healthy" && publicIp) break
-      }
-
-      if (!publicIp) {
-        setStore("addServer", { adding: false, error: "Instance launched but not healthy yet. Check /manage." })
-        return
-      }
-
+      // Add a placeholder server immediately (will show grey dot until healthy)
+      const placeholderUrl = `http://launching-${instance.instanceId}:4096`
       const conn: ServerConnection.Http = {
         type: "http",
-        displayName: name,
-        http: { url: `http://${publicIp}:4096` },
+        displayName: `${name} (launching...)`,
+        http: { url: placeholderUrl },
       }
+      server.add(conn)
 
+      // Close dialog right away
       setStore("addServer", { adding: false })
       resetAdd()
-      await select(conn, true)
+      dialog.close()
+
+      // Poll in the background — once healthy, replace placeholder with real URL
+      const poll = async () => {
+        const deadline = Date.now() + 300_000
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 10_000))
+          try {
+            const status = await fetch(`${managerUrl}/api/instances/${instance.instanceId}`).then((r) => r.json()) as { publicIp: string | null; status: string; name: string }
+            if (status.status === "healthy" && status.publicIp) {
+              // Remove placeholder and add real server
+              server.remove(ServerConnection.Key.make(placeholderUrl))
+              const realConn: ServerConnection.Http = {
+                type: "http",
+                displayName: name,
+                http: { url: `http://${status.publicIp}:4096` },
+              }
+              server.add(realConn)
+              return
+            }
+          } catch {}
+        }
+      }
+      poll()
     } catch (err) {
       setStore("addServer", { adding: false, error: `Failed to launch: ${err}` })
     }
