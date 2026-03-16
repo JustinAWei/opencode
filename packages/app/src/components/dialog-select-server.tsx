@@ -8,7 +8,7 @@ import { List } from "@opencode-ai/ui/list"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { showToast } from "@opencode-ai/ui/toast"
 import { useNavigate } from "@solidjs/router"
-import { createEffect, createMemo, createResource, onCleanup, Show } from "solid-js"
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
 import { useLanguage } from "@/context/language"
@@ -203,6 +203,44 @@ function EditServerForm(props: ServerFormProps) {
         </div>
       </div>
     </div>
+  )
+}
+
+type ManagedInstance = { name: string; status: string; publicIp: string | null; instanceId: string }
+
+function ProvisioningInstances() {
+  const [instances, setInstances] = createSignal<ManagedInstance[]>([])
+
+  const fetchInstances = async () => {
+    try {
+      const managerUrl = (import.meta as any).env?.VITE_MANAGER_URL || location.origin
+      const resp = await fetch(`${managerUrl}/api/instances`)
+      if (!resp.ok) return
+      const all = (await resp.json()) as ManagedInstance[]
+      setInstances(all.filter((i) => i.status !== "healthy" && i.status !== "terminated" && i.status !== "stopping"))
+    } catch {}
+  }
+
+  fetchInstances()
+  const interval = setInterval(fetchInstances, 5_000)
+  onCleanup(() => clearInterval(interval))
+
+  return (
+    <Show when={instances().length > 0}>
+      <div class="px-5 pb-2">
+        <For each={instances()}>
+          {(inst) => (
+            <div class="flex items-center gap-3 min-w-0 p-3 opacity-60">
+              <div class="size-1.5 rounded-full shrink-0 bg-amber-400" />
+              <div class="flex flex-col min-w-0">
+                <span class="text-14-regular truncate">{inst.name}</span>
+                <span class="text-12-regular text-text-dimmed-extra">{inst.status}...</span>
+              </div>
+            </div>
+          )}
+        </For>
+      </div>
+    </Show>
   )
 }
 
@@ -709,6 +747,7 @@ export function DialogSelectServer() {
               )
             }}
           </List>
+          <ProvisioningInstances />
         </Show>
 
         <div class="px-5 pb-5">
