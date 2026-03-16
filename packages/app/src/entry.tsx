@@ -176,21 +176,32 @@ if (root instanceof HTMLElement) {
       root,
     )
 
-    // Periodically sync managed servers into localStorage so the app picks them up
+    // Periodically sync managed servers into localStorage
+    // Adds new healthy servers, removes servers that no longer exist in the manager
     setInterval(async () => {
       const servers = await fetchManagedServers()
-      for (const s of servers) {
-        const key = `opencode.global.dat:server.v3`
-        try {
-          const stored = JSON.parse(localStorage.getItem(key) || "{}")
-          const list: Array<{ type: string; http: { url: string }; displayName?: string }> = stored.list || []
+      const key = `opencode.global.dat:server.v3`
+      try {
+        const stored = JSON.parse(localStorage.getItem(key) || "{}")
+        const list: Array<{ type: string; http: { url: string }; displayName?: string }> = stored.list || []
+        const managedUrls = new Set(servers.map((s) => s.http.url))
+
+        // Add new servers
+        for (const s of servers) {
           if (!list.some((existing) => existing.http?.url === s.http.url)) {
             list.push({ type: "http", http: { url: s.http.url }, displayName: s.displayName })
-            stored.list = list
-            localStorage.setItem(key, JSON.stringify(stored))
           }
-        } catch {}
-      }
+        }
+
+        // Remove servers with :4096 that are no longer in the manager
+        const cleaned = list.filter((entry) => {
+          if (!entry.http?.url?.includes(":4096")) return true // keep non-opencode entries
+          return managedUrls.has(entry.http.url)
+        })
+
+        stored.list = cleaned
+        localStorage.setItem(key, JSON.stringify(stored))
+      } catch {}
     }, 30_000)
   })()
 }
