@@ -360,13 +360,16 @@ export function DialogSelectServer() {
   async function select(conn: ServerConnection.Any, persist?: boolean) {
     if (!persist && store.status[ServerConnection.key(conn)]?.healthy === false) return
     const wasActive = server.key
+    const newKey = ServerConnection.key(conn)
     dialog.close()
     if (persist && conn.type === "http") {
       server.add(conn)
     }
-    server.setActive(ServerConnection.key(conn))
-    // If switching to a different server, reload to clear stale sessions/state
-    if (wasActive !== ServerConnection.key(conn)) {
+    server.setActive(newKey)
+    // If switching to a different server, persist the choice and reload
+    if (wasActive !== newKey) {
+      // Write the new server URL to localStorage so entry.tsx picks it up on reload
+      localStorage.setItem("opencode.settings.dat:defaultServerUrl", conn.http.url)
       window.location.href = "/"
       return
     }
