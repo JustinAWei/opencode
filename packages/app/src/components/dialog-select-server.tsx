@@ -367,21 +367,9 @@ export function DialogSelectServer() {
     server.setActive(ServerConnection.key(conn))
     localStorage.setItem("opencode.settings.dat:defaultServerUrl", conn.http.url)
     if (switching) {
-      // Clear project-scoped session caches from localStorage
-      const toRemove: string[] = []
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i)
-        if (k && (k.includes("session") || k.includes("sync"))) {
-          toRemove.push(k)
-        }
-      }
-      for (const k of toRemove) {
-        if (!k.includes("server") && !k.includes("defaultServerUrl")) {
-          localStorage.removeItem(k)
-        }
-      }
-      // Navigate to home — use replace to avoid back-button going to stale session
-      navigate("/", { replace: true })
+      // Full reload to clear in-memory session/sync stores
+      // Assets are browser-cached so this is fast (~200ms)
+      window.location.replace("/")
     } else {
       navigate("/")
     }
