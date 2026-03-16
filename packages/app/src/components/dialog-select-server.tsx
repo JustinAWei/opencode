@@ -359,13 +359,17 @@ export function DialogSelectServer() {
 
   async function select(conn: ServerConnection.Any, persist?: boolean) {
     if (!persist && store.status[ServerConnection.key(conn)]?.healthy === false) return
+    const wasActive = server.key
     dialog.close()
     if (persist && conn.type === "http") {
       server.add(conn)
-      navigate("/")
-      return
     }
     server.setActive(ServerConnection.key(conn))
+    // If switching to a different server, reload to clear stale sessions/state
+    if (wasActive !== ServerConnection.key(conn)) {
+      window.location.href = "/"
+      return
+    }
     navigate("/")
   }
 
