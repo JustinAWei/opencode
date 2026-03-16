@@ -359,13 +359,32 @@ export function DialogSelectServer() {
 
   async function select(conn: ServerConnection.Any, persist?: boolean) {
     if (!persist && store.status[ServerConnection.key(conn)]?.healthy === false) return
+    const switching = server.key !== ServerConnection.key(conn)
     dialog.close()
     if (persist && conn.type === "http") {
       server.add(conn)
     }
     server.setActive(ServerConnection.key(conn))
     localStorage.setItem("opencode.settings.dat:defaultServerUrl", conn.http.url)
-    navigate("/")
+    if (switching) {
+      // Clear project-scoped session caches from localStorage
+      const toRemove: string[] = []
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)
+        if (k && (k.includes("session") || k.includes("sync"))) {
+          toRemove.push(k)
+        }
+      }
+      for (const k of toRemove) {
+        if (!k.includes("server") && !k.includes("defaultServerUrl")) {
+          localStorage.removeItem(k)
+        }
+      }
+      // Navigate to home — use replace to avoid back-button going to stale session
+      navigate("/", { replace: true })
+    } else {
+      navigate("/")
+    }
   }
 
   const handleAddChange = (value: string) => {
