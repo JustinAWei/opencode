@@ -1,4 +1,4 @@
-import { createEffect, createMemo, onCleanup, Show, untrack } from "solid-js"
+import { createEffect, createMemo, createSignal, onCleanup, Show, untrack } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLocation, useNavigate, useParams } from "@solidjs/router"
 import { IconButton } from "@opencode-ai/ui/icon-button"
@@ -6,11 +6,15 @@ import { Icon } from "@opencode-ai/ui/icon"
 import { Button } from "@opencode-ai/ui/button"
 import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
 import { useTheme } from "@opencode-ai/ui/theme"
+import { useDialog } from "@opencode-ai/ui/context/dialog"
 
 import { useLayout } from "@/context/layout"
 import { usePlatform } from "@/context/platform"
 import { useCommand } from "@/context/command"
 import { useLanguage } from "@/context/language"
+import { useServer, serverName } from "@/context/server"
+import { useCheckServerHealth } from "@/utils/server-health"
+import { DialogSelectServer } from "@/components/dialog-select-server"
 import { applyPath, backPath, forwardPath } from "./titlebar-history"
 
 type TauriDesktopWindow = {
@@ -44,6 +48,23 @@ export function Titlebar() {
   const navigate = useNavigate()
   const location = useLocation()
   const params = useParams()
+  const server = useServer()
+  const dialog = useDialog()
+  const checkHealth = useCheckServerHealth()
+  const [health, setHealth] = createSignal<boolean | undefined>(undefined)
+
+  // Poll server health
+  createEffect(() => {
+    const current = server.current
+    if (!current) return
+    const check = async () => {
+      const result = await checkHealth(current.http)
+      setHealth(result.healthy)
+    }
+    check()
+    const interval = setInterval(check, 15_000)
+    onCleanup(() => clearInterval(interval))
+  })
 
   const mac = createMemo(() => platform.platform === "desktop" && platform.os === "macos")
   const windows = createMemo(() => platform.platform === "desktop" && platform.os === "windows")
@@ -281,6 +302,24 @@ export function Titlebar() {
                 />
               </Tooltip>
             </div>
+            <Show when={server.current}>
+              <button
+                class="flex items-center gap-1.5 ml-2 px-1.5 py-0.5 rounded-md hover:bg-surface-base-hover transition-colors cursor-pointer border-none bg-transparent"
+                onClick={() => dialog.show(() => <DialogSelectServer />)}
+              >
+                <div
+                  classList={{
+                    "size-1.5 rounded-full shrink-0": true,
+                    "bg-icon-success-base": health() === true,
+                    "bg-icon-critical-base": health() === false,
+                    "bg-border-weak-base": health() === undefined,
+                  }}
+                />
+                <span class="text-12-regular text-text-dimmed-extra truncate max-w-[120px]">
+                  {server.current ? serverName(server.current) : ""}
+                </span>
+              </button>
+            </Show>
           </div>
         </div>
         <div id="opencode-titlebar-left" class="flex items-center gap-3 min-w-0 px-2" />
